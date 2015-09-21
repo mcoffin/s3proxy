@@ -3,8 +3,10 @@ package s3proxy
 import (
 	"io"
 	"net/http"
+	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
 type S3BucketServer struct {
@@ -26,8 +28,15 @@ func (self *S3BucketServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := self.sss.GetObject(&params)
 	if err != nil {
-		// TODO: WAY better error handling
-		panic(err)
+		azErr := err.(awserr.Error)
+		errCode := azErr.Code()
+		if errCode == "NoSuchKey" {
+			http.NotFound(rw, r)
+			return
+		}
+
+		rw.WriteHeader(500)
+		rw.Write([]byte(fmt.Sprintf("%s: %s", azErr.Code(), azErr.Message())))
 		return
 	}
 	rw.WriteHeader(200)
