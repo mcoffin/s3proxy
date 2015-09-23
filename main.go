@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/codegangsta/negroni"
 	"github.com/mcoffin/s3proxy/s3proxy"
 	"net/http"
@@ -17,7 +18,9 @@ func main() {
 	flag.Parse()
 
 	mux := http.NewServeMux()
-	bucketHandler := s3proxy.NewS3BucketServer(*bucket, *region)
+	awsConfig := aws.NewConfig().WithRegion(*region)
+	fs := s3proxy.NewS3BucketFileSystem(*bucket, awsConfig)
+	bucketHandler := http.FileServer(fs)
 	mux.Handle("/", bucketHandler)
 
 	n := negroni.Classic()
