@@ -1,4 +1,6 @@
 # s3proxy
+[![Stories in Ready](https://badge.waffle.io/mcoffin/s3proxy.png?label=ready&title=Ready)](https://waffle.io/mcoffin/s3proxy)
+
 Simple Go HTTP server to serve S3 bucket content
 
 # Usage Example
