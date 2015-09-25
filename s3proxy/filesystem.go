@@ -6,9 +6,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"net/http"
 	"os"
+	"io"
 	"log"
 	"strings"
 	"time"
+	"bytes"
 )
 
 type S3BucketFileSystem struct {
@@ -32,11 +34,14 @@ func (self *S3BucketFileSystem) Open(name string) (http.File, error) {
 	if !strings.HasSuffix(name, "/")  {
 		resp, err := self.sss.GetObject(&params)
 		if err == nil {
-			return &s3BucketObject{
+			bko := s3BucketObject{
 				Key: name,
 				PossibleDir: false,
 				response: resp,
-			}, nil
+				fileReader: nil,
+			}
+			err = bko.createFileReader()
+			return &bko, err
 		}
 	}
 
@@ -107,7 +112,7 @@ func (self *s3BucketDirectory) Close() error {
 }
 
 func (self *s3BucketDirectory) Seek(offset int64, whence int) (int64, error) {
-	return 0, errors.New("Unsupported operation: Seek")
+	return 0, errors.New("Unsupported operation: Seek on directory")
 }
 
 func (self *s3BucketDirectory) Readdir(count int) ([]os.FileInfo, error) {
@@ -155,18 +160,47 @@ type s3BucketObject struct {
 	Key string
 	PossibleDir bool
 	response *s3.GetObjectOutput
+	fileReader *bytes.Reader
+}
+
+func (self *s3BucketObject) createFileReader() error {
+	buf := bytes.NewBuffer([]byte{})
+	l, err := io.Copy(buf, self.response.Body)
+	if err != nil {
+		return err
+	}
+	if l != self.Size() {
+		return errors.New("Content length mismatch")
+	}
+	self.fileReader = bytes.NewReader(buf.Bytes())
+	return nil
 }
 
 func (self *s3BucketObject) Read(p []byte) (int, error) {
 	if self.response != nil {
-		return self.response.Body.Read(p)
+		if self.fileReader == nil {
+			return self.response.Body.Read(p)
+		} else {
+			return self.fileReader.Read(p)
+		}
 	} else {
 		return -1, errors.New("Cannot read a non-existant file or directory!")
 	}
 }
 
 func (self *s3BucketObject) Seek(offset int64, whence int) (int64, error) {
-	return 0, errors.New("Unsupported operation: Seek")
+	if self.fileReader == nil {
+		buf := bytes.NewBuffer([]byte{})
+		l, err := io.Copy(buf, self.response.Body)
+		if err != nil {
+			return 0, err
+		}
+		if l != self.Size() {
+			return l, errors.New("Content length mismatch")
+		}
+		self.fileReader = bytes.NewReader(buf.Bytes())
+	}
+	return self.fileReader.Seek(offset, whence)
 }
 
 func (self *s3BucketObject) Close() error {
