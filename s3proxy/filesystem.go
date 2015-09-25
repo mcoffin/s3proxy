@@ -43,10 +43,12 @@ func (self *S3BucketFileSystem) Open(name string) (http.File, error) {
 	// If we're here, the path MIGHT represent a "directory" in S3
 	// To determine if it exists, we must ask S3 for a list of all objects in
 	// the bucket that have the prefix of the path.
+	dirKey := strings.TrimLeft(name, "/")
+	var maxKeys int64 = 100
 	listParams := s3.ListObjectsInput{
 		Bucket: params.Bucket,
-		Delimiter: aws.String("/"),
-		Prefix: params.Key,
+		Prefix: aws.String(dirKey),
+		MaxKeys: &maxKeys,
 	}
 	resp, err := self.sss.ListObjects(&listParams)
 	if err != nil {
