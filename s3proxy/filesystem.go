@@ -40,11 +40,111 @@ func (self *S3BucketFileSystem) Open(name string) (http.File, error) {
 		}
 	}
 
-	return &s3BucketObject{
+	// If we're here, the path MIGHT represent a "directory" in S3
+	// To determine if it exists, we must ask S3 for a list of all objects in
+	// the bucket that have the prefix of the path.
+	listParams := s3.ListObjectsInput{
+		Bucket: params.Bucket,
+		Delimiter: aws.String("/"),
+		Prefix: params.Key,
+	}
+	resp, err := self.sss.ListObjects(&listParams)
+	if err != nil {
+		return nil, err
+	}
+	// If it contains nothing, then the directory doesn't exist
+	if len(resp.Contents) <= 0 {
+		return nil, os.ErrNotExist
+	}
+
+	return &s3BucketDirectory {
 		Key: *params.Key,
-		PossibleDir: true,
-		response: nil,
+		response: resp,
 	}, nil
+}
+
+type s3BucketDirEntry struct {
+	obj *s3.Object
+}
+
+func (self s3BucketDirEntry) Name() string {
+	return *self.obj.Key
+}
+
+func (self s3BucketDirEntry) Size() int64 {
+	return *self.obj.Size
+}
+
+func (self s3BucketDirEntry) Mode() os.FileMode {
+	return s3BucketObjectMode
+}
+
+func (self s3BucketDirEntry) ModTime() time.Time {
+	return *self.obj.LastModified
+}
+
+func (self s3BucketDirEntry) IsDir() bool {
+	return false
+}
+
+func (self s3BucketDirEntry) Sys() interface{} {
+	return nil
+}
+
+type s3BucketDirectory struct {
+	Key string
+	response *s3.ListObjectsOutput
+}
+
+func (self *s3BucketDirectory) Read(p []byte) (int, error) {
+	return 0, nil
+}
+
+func (self *s3BucketDirectory) Close() error {
+	return nil
+}
+
+func (self *s3BucketDirectory) Seek(offset int64, whence int) (int64, error) {
+	return 0, errors.New("Unsupported operation: Seek")
+}
+
+func (self *s3BucketDirectory) Readdir(count int) ([]os.FileInfo, error) {
+	nEntries := len(self.response.Contents)
+	entries := make([]os.FileInfo, nEntries, nEntries)
+	for i := range self.response.Contents {
+		entries[i] = &s3BucketDirEntry{
+			obj: self.response.Contents[i],
+		}
+	}
+	return entries, nil
+}
+
+func (self *s3BucketDirectory) Stat() (os.FileInfo, error) {
+	return self, nil
+}
+
+func (self *s3BucketDirectory) Name() string {
+	return self.Key
+}
+
+func (self *s3BucketDirectory) Size() int64 {
+	return 0
+}
+
+func (self *s3BucketDirectory) Mode() os.FileMode {
+	return os.ModeDir
+}
+
+func (self *s3BucketDirectory) ModTime() time.Time {
+	return time.Now()
+}
+
+func (self *s3BucketDirectory) IsDir() bool {
+	return true
+}
+
+func (self *s3BucketDirectory) Sys() interface{} {
+	return nil
 }
 
 const s3BucketObjectMode os.FileMode = 0444
