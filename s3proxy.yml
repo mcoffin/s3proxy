@@ -1,0 +1,4 @@
+buckets:
+  - name: ntct-cloud-docs
+    region: us-west-1
+    path: "/"
