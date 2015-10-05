@@ -49,7 +49,7 @@ func (self *S3BucketFileSystem) Open(name string) (http.File, error) {
 	// To determine if it exists, we must ask S3 for a list of all objects in
 	// the bucket that have the prefix of the path.
 	dirKey := strings.TrimLeft(name, "/")
-	var maxKeys int64 = 100
+	var maxKeys int64 = 1000
 	listParams := s3.ListObjectsInput{
 		Bucket: params.Bucket,
 		Prefix: aws.String(dirKey),
@@ -71,11 +71,14 @@ func (self *S3BucketFileSystem) Open(name string) (http.File, error) {
 }
 
 type s3BucketDirEntry struct {
+	DirKey string
 	obj *s3.Object
 }
 
 func (self s3BucketDirEntry) Name() string {
-	return *self.obj.Key
+	toTrim := strings.TrimLeft(self.DirKey, "/") + "/"
+	trimmed := strings.TrimLeft(*self.obj.Key, toTrim)
+	return trimmed
 }
 
 func (self s3BucketDirEntry) Size() int64 {
@@ -100,6 +103,7 @@ func (self s3BucketDirEntry) Sys() interface{} {
 
 type s3BucketDirectory struct {
 	Key string
+	position int
 	response *s3.ListObjectsOutput
 }
 
@@ -117,13 +121,40 @@ func (self *s3BucketDirectory) Seek(offset int64, whence int) (int64, error) {
 
 func (self *s3BucketDirectory) Readdir(count int) ([]os.FileInfo, error) {
 	nEntries := len(self.response.Contents)
-	entries := make([]os.FileInfo, nEntries, nEntries)
-	for i := range self.response.Contents {
-		entries[i] = &s3BucketDirEntry{
-			obj: self.response.Contents[i],
+	log.Printf("Directory (%s) has %d contents\n", self.Key, nEntries)
+	entries := make([]os.FileInfo, 0, nEntries)
+	entriesChan := make(chan os.FileInfo)
+	go func() {
+		defer close(entriesChan)
+		n := 0
+		for i := self.position; i < len(self.response.Contents); i++ {
+			n++
+			if n > count {
+				self.position = i - 1
+				return
+			}
+
+			e := &s3BucketDirEntry{
+				DirKey: self.Key,
+				obj: self.response.Contents[i],
+			}
+			if len(e.Name()) != 0 {
+				entriesChan <- e
+			}
+		}
+		if n <= count {
+			entriesChan <- nil
+		}
+	}()
+	var err error = nil
+	for e := range entriesChan {
+		if e == nil {
+			err = io.EOF
+		} else {
+			entries = append(entries, e)
 		}
 	}
-	return entries, nil
+	return entries, err
 }
 
 func (self *s3BucketDirectory) Stat() (os.FileInfo, error) {
@@ -135,7 +166,9 @@ func (self *s3BucketDirectory) Name() string {
 }
 
 func (self *s3BucketDirectory) Size() int64 {
-	return 0
+	var contents int64 = int64(len(self.response.Contents))
+	contents -= 1
+	return contents
 }
 
 func (self *s3BucketDirectory) Mode() os.FileMode {
